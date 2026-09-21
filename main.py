@@ -33,6 +33,10 @@ def extract_text_from_file(uploaded_file):
     if uploaded_file.type == "application/pdf":
         return extract_text_from_pdf(io.BytesIO(uploaded_file.read()))
 
+    if uploaded_file.type == "text/plain":
+        return uploaded_file.read().decode("utf-8")
+    return ""
+
 if analyze and uploaded_file:
     try:
         file_content = extract_text_from_file(uploaded_file)
