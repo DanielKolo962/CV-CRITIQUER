@@ -6,7 +6,6 @@ import json
 import re
 from langchain_groq import ChatGroq
 from dotenv import load_dotenv
-from openai.types import file_content
 
 load_dotenv()
 
@@ -17,33 +16,148 @@ st.markdown("Upload your resume and get AI powered feedback tailored to your nee
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-uploaded_file = st.file_uploader("Upload your resume (PDF) or (TXT)", type=["pdf", "txt"])
+uploaded_file = st.file_uploader(
+    "Upload your resume (PDF) or (TXT)",
+    type=["pdf", "txt"]
+)
+
 job_role = st.text_input("Enter the type of job you are targetting (optional)")
 
 analyze = st.button("Analyze")
 
-def extract_text_from_pdf(pdf_file):
-    pdf_reader = PyPDF2.PdfReader(pdf_file)
-    text =""
+
+# ---------------------------------------------------------
+# FILE HANDLING
+# ---------------------------------------------------------
+
+def extract_text_from_pdf(file_bytes):
+    pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+
+    text = ""
+
     for page in pdf_reader.pages:
-        text += page.extract_text() + "\n\n"
+        page_text = page.extract_text()
+
+        if page_text:
+            text += page_text + "\n\n"
+
     return text
 
-def extract_text_from_file(uploaded_file):
-    if uploaded_file.type == "application/pdf":
-        return extract_text_from_pdf(io.BytesIO(uploaded_file.read()))
 
-    if uploaded_file.type == "text/plain":
-        return uploaded_file.read().decode("utf-8")
-    return ""
+def extract_text_from_txt(file_bytes):
+    return file_bytes.decode("utf-8")
+
+
+def detect_file_type(file_bytes):
+    """
+    Detect the actual file type based on its contents.
+    """
+
+    # PDF files normally start with %PDF-
+    if file_bytes.startswith(b"%PDF-"):
+        return "pdf"
+
+    # If it can be decoded as UTF-8, treat it as plain text.
+    try:
+        file_bytes.decode("utf-8")
+        return "txt"
+    except UnicodeDecodeError:
+        return "unknown"
+
+
+def extract_text_from_file(uploaded_file):
+    """
+    Validate the uploaded file and extract its text.
+    """
+
+    file_bytes = uploaded_file.getvalue()
+
+    # Check for an empty file first.
+    if not file_bytes:
+        raise ValueError(
+            "This file is empty. Upload a PDF or TXT file that contains your CV."
+        )
+
+    # Determine what the filename says the file is.
+    filename = uploaded_file.name.lower()
+
+    if filename.endswith(".pdf"):
+        expected_type = "pdf"
+
+    elif filename.endswith(".txt"):
+        expected_type = "txt"
+
+    else:
+        raise ValueError(
+            "Unsupported file type. Upload a PDF or TXT file."
+        )
+
+    # Determine what the file actually contains.
+    actual_type = detect_file_type(file_bytes)
+
+    if actual_type == "unknown":
+        raise ValueError(
+            "We couldn't read this file. Please upload a valid PDF or TXT file."
+        )
+
+    # Check whether the extension matches the actual content.
+    if actual_type != expected_type:
+        raise ValueError(
+            f"This file is named as a {expected_type.upper()} file, "
+            f"but its contents are actually a {actual_type.upper()} file. "
+            "Please upload the file with the correct extension."
+        )
+
+    # Process PDF.
+    if actual_type == "pdf":
+        try:
+            text = extract_text_from_pdf(file_bytes)
+
+        except Exception:
+            raise ValueError(
+                "We couldn't read this PDF. Please upload a valid text-based PDF "
+                "or a TXT file."
+            )
+
+        # PDF exists but no text could be extracted.
+        if not text.strip():
+            raise ValueError(
+                "We couldn't find any text in this PDF. It may be a scanned image — "
+                "upload a text-based PDF or a TXT file."
+            )
+
+        return text
+
+    # Process TXT.
+    if actual_type == "txt":
+        try:
+            text = extract_text_from_txt(file_bytes)
+
+        except UnicodeDecodeError:
+            raise ValueError(
+                "This TXT file could not be read as plain text. "
+                "Please upload a valid UTF-8 TXT file."
+            )
+
+        if not text.strip():
+            raise ValueError(
+                "This file is empty. Upload a PDF or TXT file that contains your CV."
+            )
+
+        return text
+
+    raise ValueError(
+        "We couldn't read this file. Please upload a valid PDF or TXT file."
+    )
+
+
+# ---------------------------------------------------------
+# AI RESUME ANALYSIS
+# ---------------------------------------------------------
 
 if analyze and uploaded_file:
     try:
         file_content = extract_text_from_file(uploaded_file)
-
-        if not file_content.strip():
-            st.error("File does not contain a PDF or a TXT file")
-            st.stop()
 
         prompt = f"""
         You are an expert Resume Reviewer, ATS Specialist, and Technical Recruiter.
@@ -162,10 +276,18 @@ if analyze and uploaded_file:
             temperature=0.3,
             max_tokens=2500
         )
+
         response = client.invoke([
-            {"role": "system", "content": "You are an expert resume reviewer and ATS Specialist Always follow the requested JSON structure exactly."},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": "You are an expert resume reviewer and ATS Specialist Always follow the requested JSON structure exactly."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
         ])
+
         raw_response = response.content.strip()
 
         # Remove Markdown code fences if the model added them
@@ -209,7 +331,7 @@ if analyze and uploaded_file:
 
         for issue in analysis["critical_issues"]:
             with st.expander(issue["issue"]):
-                st.markdown(f"**Why it matters:**")
+                st.markdown("**Why it matters:**")
                 st.write(issue["why_it_matters"])
 
                 st.markdown("**Recommendation:**")
@@ -244,6 +366,12 @@ if analyze and uploaded_file:
         st.info(analysis["suggested_summary"])
 
 
+
+    except ValueError as e:
+
+        st.error(str(e))
+
+
     except json.JSONDecodeError:
 
         st.error("The AI returned an invalid response format. Please try again.")
@@ -251,4 +379,4 @@ if analyze and uploaded_file:
 
     except Exception as e:
 
-        st.error(f"An error occurred: {e}")
+        st.error(f"An unexpected error occurred: {e}")
