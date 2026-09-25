@@ -45,7 +45,20 @@ def extract_text_from_pdf(file_bytes):
 
 
 def extract_text_from_txt(file_bytes):
-    return file_bytes.decode("utf-8")
+
+    for encoding in ("utf-8", "utf-16", "utf-16-le", "utf-16-be"):
+        try:
+            return file_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+
+    raise UnicodeDecodeError(
+        "text",
+        file_bytes,
+        0,
+        len(file_bytes),
+        "Unable to decode the TXT File using a supported encoding"
+    )
 
 
 def detect_file_type(file_bytes):
@@ -54,15 +67,18 @@ def detect_file_type(file_bytes):
     """
 
     # PDF files normally start with %PDF-
-    if file_bytes.startswith(b"%PDF-"):
+    if b"%PDF-" in file_bytes[:1024]:
         return "pdf"
 
     # If it can be decoded as UTF-8, treat it as plain text.
-    try:
-        file_bytes.decode("utf-8")
-        return "txt"
-    except UnicodeDecodeError:
-        return "unknown"
+    for encoding in ("utf-8", "utf-16", "utf-16-le", "utf-16-be"):
+        try:
+            file_bytes.decode(encoding)
+            return "txt"
+        except UnicodeDecodeError:
+            continue
+
+    return "unknown"
 
 
 def extract_text_from_file(uploaded_file):
@@ -113,11 +129,11 @@ def extract_text_from_file(uploaded_file):
         try:
             text = extract_text_from_pdf(file_bytes)
 
-        except Exception:
+        except Exception as exc:
             raise ValueError(
                 "We couldn't read this PDF. Please upload a valid text-based PDF "
                 "or a TXT file."
-            )
+            ) from exc
 
         # PDF exists but no text could be extracted.
         if not text.strip():
@@ -136,7 +152,7 @@ def extract_text_from_file(uploaded_file):
         except UnicodeDecodeError:
             raise ValueError(
                 "This TXT file could not be read as plain text. "
-                "Please upload a valid UTF-8 TXT file."
+                "Please upload a valid plain-text TXT file."
             )
 
         if not text.strip():
@@ -360,6 +376,26 @@ if analyze and uploaded_file:
             st.write(", ".join(keywords))
         else:
             st.success("No major missing keywords identified.")
+
+        st.markdown("## 🛠️ Skills Analysis")
+
+        skills_analysis = analysis["skills_analysis"]
+
+        st.markdown("**Existing Skills**")
+        existing_skills = skills_analysis["existing_skills"]
+
+        if existing_skills:
+            st.write(", ".join(existing_skills))
+        else:
+            st.info("No existing skills were identified.")
+
+        st.markdown("**Skills to Consider**")
+        skills_to_consider = skills_analysis["skills_to_consider"]
+
+        if skills_to_consider:
+            st.write(", ".join(skills_to_consider))
+        else:
+            st.success("No additional skills identified.")
 
         st.markdown("## 📝 Suggested Professional Summary")
 
