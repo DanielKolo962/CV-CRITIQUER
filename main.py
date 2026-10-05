@@ -5,8 +5,12 @@ import os
 import json
 import re
 from langchain_groq import ChatGroq
+from cv_optimizer.failure_messages import (
+    missing_api_key_message,
+    over_length_message,
+    analysis_failure_message,
+)
 from dotenv import load_dotenv
-from openai.types import file_content
 
 load_dotenv()
 
@@ -17,7 +21,15 @@ st.markdown("Upload your resume and get AI powered feedback tailored to your nee
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
+
 uploaded_file = st.file_uploader("Upload your resume (PDF) or (TXT)", type=["pdf", "txt"])
+
+uploaded_file = st.file_uploader(
+    "Upload your resume (PDF) or (TXT) - maximum 10,000 words",
+    type=["pdf", "txt"]
+)
+
+
 job_role = st.text_input("Enter the type of job you are targetting (optional)")
 
 analyze = st.button("Analyze")
@@ -37,9 +49,16 @@ if analyze and uploaded_file:
     try:
         file_content = extract_text_from_file(uploaded_file)
 
+
         if not file_content.strip():
             st.error("File does not contain a PDF or a TXT file")
             st.stop()
+
+        word_count = len(file_content.split())
+
+        if word_count > 10000:
+            raise ValueError(over_length_message(word_count))
+
 
         prompt = f"""
         You are an expert Resume Reviewer, ATS Specialist, and Technical Recruiter.
@@ -152,16 +171,32 @@ if analyze and uploaded_file:
           information for a specific recommendation.
         """
 
+        if not GROQ_API_KEY:
+            raise ValueError(missing_api_key_message())
+
         client = ChatGroq(
             groq_api_key=GROQ_API_KEY,
             model="openai/gpt-oss-120b",
             temperature=0.3,
             max_tokens=2500
         )
-        response = client.invoke([
-            {"role": "system", "content": "You are an expert resume reviewer and ATS Specialist Always follow the requested JSON structure exactly."},
-            {"role": "user", "content": prompt}
+
+        try:
+            response = client.invoke([
+            {
+                "role": "system",
+                "content": "You are an expert resume reviewer and ATS Specialist Always follow the requested JSON structure exactly."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
         ])
+        except Exception as exc:
+            raise ValueError(analysis_failure_message(exc)) from exc
+
+
+
         raw_response = response.content.strip()
 
         # Remove Markdown code fences if the model added them
@@ -239,12 +274,15 @@ if analyze and uploaded_file:
 
         st.info(analysis["suggested_summary"])
 
-
     except json.JSONDecodeError:
 
         st.error("The AI returned an invalid response format. Please try again.")
 
+    except ValueError as e:
+        st.error(e)
 
-    except Exception as e:
-
-        st.error(f"An error occurred: {e}")
+    except Exception:
+        st.error(
+            "Something went wrong while analyzing your CV. "
+            "Please try again shortly."
+        )
