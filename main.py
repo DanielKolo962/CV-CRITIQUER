@@ -5,11 +5,12 @@ import os
 import json
 import re
 from langchain_groq import ChatGroq
-from groq import APIConnectionError
-from groq import APIConnectionError
-from groq import RateLimitError
+from cv_optimizer.failure_messages import (
+    missing_api_key_message,
+    over_length_message,
+    analysis_failure_message,
+)
 from dotenv import load_dotenv
-from openai.types import file_content
 
 load_dotenv()
 
@@ -56,10 +57,7 @@ if analyze and uploaded_file:
         word_count = len(file_content.split())
 
         if word_count > 10000:
-            raise ValueError(
-                f"This CV is {word_count:,} words - the limit is 10,000. "
-                "Upload a shorter version"
-            )
+            raise ValueError(over_length_message(word_count))
 
 
         prompt = f"""
@@ -174,10 +172,7 @@ if analyze and uploaded_file:
         """
 
         if not GROQ_API_KEY:
-            raise ValueError(
-                "No API key is configured. "
-                "see the README  for how to add one, then restart the app."
-            )
+            raise ValueError(missing_api_key_message())
 
         client = ChatGroq(
             groq_api_key=GROQ_API_KEY,
@@ -185,12 +180,6 @@ if analyze and uploaded_file:
             temperature=0.3,
             max_tokens=2500
         )
-
-        response = client.invoke([
-            {"role": "system", "content": "You are an expert resume reviewer and ATS Specialist Always follow the requested JSON structure exactly."},
-            {"role": "user", "content": prompt}
-        ])
-
 
         try:
             response = client.invoke([
@@ -203,19 +192,9 @@ if analyze and uploaded_file:
                 "content": prompt
             }
         ])
-        except AuthenticationError:
-            raise ValueError(
-                "The API key is invalid. check your GROQ_API_KEY and try again."
-            )
-        except APIConnectionError:
-            raise ValueError(
-                "The analysis service could not be reached. Please try again shortly"
-            )
-        except RateLimitError:
-            raise ValueError(
-                "The analysis service has rate-limited your request. "
-                "Please wait a moment before trying again."
-            )
+        except Exception as exc:
+            raise ValueError(analysis_failure_message(exc)) from exc
+
 
 
         raw_response = response.content.strip()
@@ -295,16 +274,15 @@ if analyze and uploaded_file:
 
         st.info(analysis["suggested_summary"])
 
-    except ValueError as e:
-        st.error(e)
-
     except json.JSONDecodeError:
 
         st.error("The AI returned an invalid response format. Please try again.")
+
+    except ValueError as e:
+        st.error(e)
 
     except Exception:
         st.error(
             "Something went wrong while analyzing your CV. "
             "Please try again shortly."
         )
-
